@@ -170,6 +170,29 @@ mod tests {
         b.iter(|| prepend("key", "value"));
     }
 
+    #[test]
+    fn test_eval() {
+        assert_eq!(eval("redis.call('ping')", vec!["v1", "v2"]), "eval redis.call('ping') v1 v2\r\n");
+        assert_eq!(eval("redis.call('ping')", vec![]), "eval redis.call('ping')\r\n"); // todo
+    }
+
+    #[cfg(feature = "unstable")]
+    #[bench]
+    fn eval_benchmark(b: &mut test::Bencher) {
+        b.iter(|| eval("redis.call('ping')"));
+    }
+
+    #[test]
+    fn test_evalsha() {
+        assert_eq!(evalsha("foo", vec!["v1", "v2"]), "evalsha foo v1 v2\r\n");
+        assert_eq!(evalsha("foo", vec![]), "evalsha foo\r\n"); // todo
+    }
+
+    #[cfg(feature = "unstable")]
+    #[bench]
+    fn evalsha_benchmark(b: &mut test::Bencher) {
+        b.iter(|| evalsha("foo"));
+    }
 }
 
 /// FLUSHALL request
@@ -274,4 +297,12 @@ pub fn prepend(key: &str, value: &str) -> String {
         value.len(),
         value
     )
+}
+
+pub fn eval(script: &str, keys: Vec<&str>) -> String {
+    "".to_owned()
+}
+
+pub fn evalsha(sha: &str, keys: Vec<&str>) -> String {
+    "".to_owned()
 }

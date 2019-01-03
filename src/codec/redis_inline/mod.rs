@@ -61,6 +61,8 @@ enum Command {
     Decr(Param),
     Append(Param, Param),
     Prepend(Param, Param),
+    Eval(Param, Vec<Param>),
+    Evalsha(Param, Vec<Param>),
 }
 
 impl Command {
@@ -125,6 +127,20 @@ impl Command {
                 p1.regen();
                 gen::prepend(p1.value.string.as_str(), p2.value.string.as_str()).into_bytes()
             }
+            Command::Eval(ref p1, ref mut p2) => {
+                let keys = p2.iter_mut()
+                    .map(|v| { v.regen(); v.value.string.as_str() })
+                    .collect();
+
+                gen::eval(p1.value.string.as_str(), keys).into_bytes()
+            }
+            Command::Evalsha(ref p1, ref mut p2) => {
+                let keys = p2.iter_mut()
+                    .map(|v| { v.regen(); v.value.string.as_str() })
+                    .collect();
+
+                gen::evalsha(p1.value.string.as_str(), keys).into_bytes()
+            }
         }
     }
 }
@@ -153,6 +169,8 @@ impl ProtocolGen for Command {
             Command::Decr(_) => "decr",
             Command::Append(_, _) => "append",
             Command::Prepend(_, _) => "prepend",
+            Command::Eval(_, _) => "eval",
+            Command::Evalsha(_, _) => "evalsha",
         }
     }
 
@@ -272,6 +290,19 @@ fn extract_workload(workload: &BTreeMap<String, Value>) -> CResult<BenchmarkWork
             "decr" if ps.len() == 1 => Command::Decr(ps[0].clone()),
             "append" if ps.len() == 2 => Command::Append(ps[0].clone(), ps[1].clone()),
             "prepend" if ps.len() == 1 => Command::Prepend(ps[0].clone(), ps[1].clone()),
+            "eval" if ps.len() >= 3 => {
+                Command::Eval(ps[0].clone(), ps.iter().skip(2).map(|p| p.clone()).collect())
+            },
+            "evalsha" if ps.len() >= 3 => {
+                Command::Evalsha(ps[0].clone(), ps.iter().skip(2).map(|p| p.clone()).collect())
+            },
+            "eval" | "evalsha" => {
+                return Err(format!(
+                        "invalid number of params ({}, needs at least 3) for method {}",
+                        ps.len(),
+                        method,
+                    ));
+            }
             "get" | "set" | "hset" | "hget" | "del" | "expire" | "incr" | "decr" | "append" |
             "prepend" => {
                 return Err(format!(
