@@ -53,12 +53,14 @@ pub struct StandardOut<'a> {
     previous: HashMap<String, HashMap<Output, usize>>,
     recorder: &'a Simple,
     interval: usize,
+    json_windows: Vec<serde_json::Value>,
 }
 
 impl<'a> StandardOut<'a> {
     pub fn new(recorder: &'a Simple, interval: usize) -> Self {
         Self {
             previous: recorder.hash_map(),
+            json_windows: Vec::new(),
             recorder,
             interval,
         }
@@ -104,6 +106,57 @@ impl<'a> StandardOut<'a> {
             "{} ({}): p25: {} p50: {} p75: {} p90: {} p99: {} p999: {} p9999: {}",
             label, unit, p25, p50, p75, p90, p99, p999, p9999
         );
+    }
+
+    fn display_percentiles_json(&self, stat: Stat, label: &str, divisor: usize, unit: &str) -> serde_json::Value {
+        let p25 = self
+            .recorder
+            .percentile(stat, 0.25)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+        let p50 = self
+            .recorder
+            .percentile(stat, 0.50)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+        let p75 = self
+            .recorder
+            .percentile(stat, 0.75)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+        let p90 = self
+            .recorder
+            .percentile(stat, 0.90)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+        let p99 = self
+            .recorder
+            .percentile(stat, 0.99)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+        let p999 = self
+            .recorder
+            .percentile(stat, 0.999)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+        let p9999 = self
+            .recorder
+            .percentile(stat, 0.9999)
+            .map(|v| format!("{}", v / divisor))
+            .unwrap_or_else(|| "none".to_string());
+
+        json!({
+            label: {
+                "unit": unit,
+                "p25": p25,
+                "p50": p50,
+                "p75": p75,
+                "p90": p90,
+                "p99": p99,
+                "p999": p999,
+                "p9999": p9999
+            }
+        })
     }
 
     pub fn print(&mut self) {
@@ -193,7 +246,78 @@ impl<'a> StandardOut<'a> {
 
         self.display_percentiles(Stat::ConnectionsOpened, "Connect Latency", 1000, "us");
         self.display_percentiles(Stat::ResponsesTotal, "Request Latency", 1000, "us");
+
+        self.json_windows.push(json!({
+            "connections": {
+                "attempts": delta_count(&self.previous, &current, Stat::ConnectionsTotal).unwrap_or(0),
+                "opened": delta_count(&self.previous, &current, Stat::ConnectionsOpened).unwrap_or(0),
+                "errors":   delta_count(&self.previous, &current, Stat::ConnectionsError).unwrap_or(0),
+                "timeouts": delta_count(&self.previous, &current, Stat::ConnectionsTimeout).unwrap_or(0),
+                "open": self.recorder
+                .counter(Stat::ConnectionsOpened)
+                .saturating_sub(self.recorder.counter(Stat::ConnectionsClosed)),
+            },
+            "commands": {
+                "get": delta_count(&self.previous, &current, Stat::CommandsGet).unwrap_or(0),
+                "set": delta_count(&self.previous, &current, Stat::CommandsSet).unwrap_or(0),
+            },
+            "percentiles": {
+                "key_size": self.display_percentiles_json(Stat::KeySize, "Keys", 1, "bytes"),
+                "value_size": self.display_percentiles_json(Stat::ValueSize, "Values", 1, "bytes"),
+                "connections_openend": self.display_percentiles_json(Stat::ConnectionsOpened, "Connect Latency", 1000, "us"),
+                "responses_total": self.display_percentiles_json(Stat::ResponsesTotal, "Request Latency", 1000, "us"),
+            },
+            "requests": {
+                "sent":delta_count(&self.previous, &current, Stat::RequestsDequeued).unwrap_or(0),
+                "timeout":delta_count(&self.previous, &current, Stat::RequestsTimeout).unwrap_or(0),
+                "prepared":delta_count(&self.previous, &current, Stat::RequestsEnqueued).unwrap_or(0),
+                "queue_depth":self.recorder.counter(Stat::RequestsEnqueued)
+                - self.recorder.counter(Stat::RequestsDequeued),
+            },
+            "responses": {
+                "ok":delta_count(&self.previous, &current, Stat::ResponsesOk).unwrap_or(0),
+                "error":delta_count(&self.previous, &current, Stat::ResponsesError).unwrap_or(0),
+                "hit":delta_count(&self.previous, &current, Stat::ResponsesHit).unwrap_or(0),
+                "miss":delta_count(&self.previous, &current, Stat::ResponsesMiss).unwrap_or(0),
+            },
+            "rate": {
+                "request_per_sec":delta_count(&self.previous, &current, Stat::RequestsDequeued).unwrap_or(0) as f64
+                / self.interval as f64,
+                "response_per_sec":delta_count(&self.previous, &current, Stat::ResponsesTotal).unwrap_or(0) as f64
+                / self.interval as f64,
+                "connect_per_sec":delta_count(&self.previous, &current, Stat::ConnectionsTotal).unwrap_or(0) as f64
+                / self.interval as f64,
+            },
+            "success": {
+                "request_percent":            delta_percent(
+                &self.previous,
+                &current,
+                Stat::ResponsesTotal,
+                Stat::RequestsDequeued
+            )
+            .unwrap_or(100.0),
+                "response_percent":            delta_percent(
+                &self.previous,
+                &current,
+                Stat::ResponsesOk,
+                Stat::ResponsesTotal
+            )
+            .unwrap_or(100.0),
+                "connect_percent":            delta_percent(
+                &self.previous,
+                &current,
+                Stat::ConnectionsOpened,
+                Stat::ConnectionsTotal
+            )
+            .unwrap_or(100.0)
+            },
+        }));
+
         self.previous = current;
+    }
+
+    pub fn print_json(&self) {
+        info!("json:{}", json!({ "windows" : self.json_windows }));
     }
 }
 

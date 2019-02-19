@@ -34,6 +34,9 @@ use rand::thread_rng;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+#[macro_use]
+extern crate serde_json;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn main() {
@@ -85,6 +88,7 @@ pub fn main() {
         *readings = current;
         recorder.latch();
     }
+    stats_stdout.print_json();
     if let Some(waterfall) = config.waterfall() {
         recorder.save_waterfall(waterfall);
     }
